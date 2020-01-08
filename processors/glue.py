@@ -483,6 +483,44 @@ class WnliProcessor(DataProcessor):
                 InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label))
         return examples
 
+class NerProcessor(DataProcessor):
+    """Processor for the WNLI data set (GLUE version)."""
+
+    def get_train_examples(self, data_dir):
+        """See base class."""
+        return self._create_examples(
+            self._read_tsv_ner(os.path.join(data_dir, "train.tsv")), "train")
+
+    def get_dev_examples(self, data_dir):
+        """See base class."""
+        return self._create_examples(
+            self._read_tsv(os.path.join(data_dir, "dev.tsv")), "dev")
+
+    def get_labels(self):
+        """See base class."""
+        return ["0", "1"]
+    
+    def get_labels_ner(self, data_dir):
+        """Get labels for ner"""
+        labels_ori = self._read_labels(os.path.join(data_dir, "label.tsv"))
+        labels = []
+        labels.extend(map(lambda x: "B-" + x, labels_ori))
+        labels.extend(map(lambda x: "I-" + x, labels_ori))
+        return labels
+
+    def _create_examples(self, lines, set_type):
+        """Creates examples for the training and dev sets."""
+        examples = []
+        for (i, (sentence, label)) in enumerate(lines):
+            if i == 0:
+                continue
+            guid = "%s-%d" % (set_type, i)
+            text_a = ' '.join(sentence)
+            text_b = None
+            label = label
+            examples.append(
+                InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label))
+        return examples
 
 glue_tasks_num_labels = {
     "mnli": 3,
@@ -508,6 +546,7 @@ glue_processors = {
     "rte": RteProcessor,
     'lcqmc': LcqmcProcessor,
     "wnli": WnliProcessor,
+    "ner": NerProcessor
 }
 
 glue_output_modes = {
@@ -522,4 +561,5 @@ glue_output_modes = {
     "rte": "classification",
     "wnli": "classification",
     'lcqmc': "classification",
+    'ner': 'classification'
 }

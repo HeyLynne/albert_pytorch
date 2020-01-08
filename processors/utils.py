@@ -83,6 +83,12 @@ class DataProcessor(object):
         """Gets the list of labels for this data set."""
         raise NotImplementedError()
 
+    def get_label_ner(self):
+        return
+    
+    def get_label_new(self, data_dir):
+        return
+
     @classmethod
     def _read_tsv(cls, input_file, quotechar=None):
         """Reads a tab separated value file."""
@@ -102,3 +108,37 @@ class DataProcessor(object):
             for line in reader:
                 lines.append(line.strip().split("_!_"))
             return lines
+    
+    @classmethod
+    def _read_labels(cls, input_file, quotechar=None):
+        """
+        Read labels from a csv file
+        
+        File format:
+            Label description, label tag
+        """
+        with open(input_file, "r", encoding="utf-8-sig") as f:
+            reader = csv.reader(f, delimiter="\t", quotechar=quotechar)
+            labels = []
+            for line in reader:
+                if len(line) != 2:
+                    continue
+                labels.append(line[2])
+            return labels
+    
+    @classmethod
+    def _read_tsv_ner(cla, input_file):
+        with open(input_file, "r", encoding = "utf-8-sig") as f:
+            data = []
+            sentence = []
+            label = []
+            for line in f:
+                line = line.strip()
+                lists = line.split(" ")
+                for words in lists:
+                    word, tag = words.split("/")
+                    sentence.append(word)
+                    label.append(tag)
+                if len(sentence) > 0:
+                    data.append((sentence, label))
+            return data
