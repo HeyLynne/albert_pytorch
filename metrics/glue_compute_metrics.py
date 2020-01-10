@@ -27,9 +27,83 @@ except (AttributeError, ImportError) as e:
     logger.warning("To use data.metrics please install scikit-learn. See https://scikit-learn.org/stable/index.html")
     _has_sklearn = False
 
+
+class NerAccuracyEvaluator(object):
+    def __init__(self, label_lists, tag_type):
+        self._label_lists = label_lists
+        self.tag_type = tag_type
+        return
+
+    def _get_tag_fromlabel(self, labels):
+        def is_begin_label(label):
+            return label[0] == "B" # 0 is padding
+        def is_pad_label(label):
+            return label == "PAD"
+        def is_other_matchbegin(begin, other):
+            return begin[1: ] == other[1: ]
+        # notice that padding is 0, so we add 1 in each label position.
+        # PAD means padding
+        pred_label = list(map(lambda x: self._label_lists[x - 1] if x > 0 else "PAD", labels))
+        res = []
+        start = -1
+        tag = ""
+        end = -1
+        for i, p in enumerate(pred_label):
+            if is_pad_label(p):
+                continue
+            if is_begin_label(p):
+                if start != -1:
+                    res.append((start, end, tag))
+                start = i
+                end = i
+                tag = p
+            elif tag != "" and is_other_matchbegin(tag, p):
+                end = i
+        return res
+    
+    def _get_label_tag(self, pred_labels):
+        return list(map(lambda x: self._label_lists[x - 1] if x > 0 else "PAD", pred_labels))
+
+    def _evaluate_word(self, pred_labels, data_labels):
+        hit_num, pred_num, true_num = 0, 0, 0
+        label_cnt = pred_labels.shape[0]
+        print(pred_labels.shape)
+        for i in range(label_cnt):
+            tag_pred = self._get_tag_fromlabel(pred_labels[i, :])
+            tag_true = self._get_tag_fromlabel(data_labels[i, :])
+            # print("****")
+            # print(self._get_label_tag(pred_labels[i, :]), self._get_label_tag(data_labels[i, :]))
+            # print(tag_pred)
+            # print(tag_true)
+            true_cnt = len(set(tag_true))
+            pred_cnt = len(set(tag_pred))
+            hit_cnt = len(set(tag_true) & set(tag_pred))
+            hit_num += hit_cnt
+            pred_num += pred_cnt
+            true_num += true_cnt
+        logger.info("**** Eval results ****")
+        logger.info("Hit num %d, pred num %d, true num %d" % \
+            (hit_num, pred_num, true_num))
+        
+        acc, recall, f1 = 0.0, 0.0, 0.0
+        if pred_num != 0 and true_num != 0:
+            acc = float(100) * (float(hit_num) / float(pred_num))
+            recall = float(100) * (float(hit_num) / float(true_num))
+            if acc != 0 and recall != 0:
+                f1 = 2* acc * recall /(acc + recall)
+        logger.info("ACC: %f, RECALL: %f, F1 %f" % \
+            (acc, recall, f1))
+        return {"acc": acc}
+    
+    def evaluate(self, pred_labels, data_labels):
+        if self.tag_type == "WORD":
+            return self._evaluate_word(pred_labels, data_labels)
+        else:
+            raise KeyError(self.tag_type) 
+        return 
+
 def simple_accuracy(preds, labels):
     return (preds == labels).mean()
-
 
 def acc_and_f1(preds, labels):
     acc = simple_accuracy(preds, labels)
@@ -72,6 +146,8 @@ def compute_metrics(task_name, preds, labels):
     elif task_name == "wnli":
         return {"acc": simple_accuracy(preds, labels)}
     elif task_name == "lcqmc":
+        return {"acc": simple_accuracy(preds, labels)}
+    elif task_name == "ner":
         return {"acc": simple_accuracy(preds, labels)}
     else:
         raise KeyError(task_name)

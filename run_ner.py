@@ -10,28 +10,28 @@ import torch
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler, TensorDataset
 from torch.utils.data.distributed import DistributedSampler
 
-from model.modeling_albert import AlbertConfig, AlbertForNet
+from model.modeling_albert import AlbertConfig, AlbertForNer
 # from model.modeling_albert_bright import AlbertConfig, AlbertForSequenceClassification # chinese version
 from model import tokenization_albert
 from model.file_utils import WEIGHTS_NAME
 from callback.optimization.adamw import AdamW
 from callback.lr_scheduler import get_linear_schedule_with_warmup
 
-from metrics.glue_compute_metrics import compute_metrics
+from metrics.glue_compute_metrics import NerAccuracyEvaluator
 from processors import glue_output_modes as output_modes
 from processors import glue_processors as processors
-from processors import glue_convert_examples_to_features as convert_examples_to_features
-from processors import collate_fn
+from processors import glue_convert_examples_to_features_ner as convert_examples_to_features
+from processors import collate_fn_ner
 from tools.common import seed_everything
 from tools.common import init_logger, logger
 from callback.progressbar import ProgressBar
 
-def train(args, train_dataset, model, tokenizer):
+def train(args, train_dataset, label_lists, model, tokenizer):
     """ Train the model """
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size,
-                                  collate_fn=collate_fn)
+                                  collate_fn=collate_fn_ner)
 
     if args.max_steps > 0:
         num_training_steps = args.max_steps
@@ -116,7 +116,7 @@ def train(args, train_dataset, model, tokenizer):
             if args.local_rank in [-1, 0] and args.logging_steps > 0 and global_step % args.logging_steps == 0:
                 #Log metrics
                 if args.local_rank == -1:  # Only evaluate when single GPU otherwise metrics may not average well
-                    evaluate(args, model, tokenizer)
+                    evaluate(args, model, tokenizer, label_lists)
 
             if args.local_rank in [-1, 0] and args.save_steps > 0 and global_step % args.save_steps == 0:
                 # Save model checkpoint
@@ -134,12 +134,13 @@ def train(args, train_dataset, model, tokenizer):
             torch.cuda.empty_cache()
     return global_step, tr_loss / global_step
 
-def evaluate(args, model, tokenizer, prefix=""):
+def evaluate(args, model, tokenizer, label_lists, prefix=""):
     # Loop to handle MNLI double evaluation (matched, mis-matched)
     eval_task_names = ("mnli", "mnli-mm") if args.task_name == "mnli" else (args.task_name,)
     eval_outputs_dirs = (args.output_dir, args.output_dir + '-MM') if args.task_name == "mnli" else (args.output_dir,)
 
     results = {}
+    logger.info("**** Evaluate *****")
     for eval_task, eval_output_dir in zip(eval_task_names, eval_outputs_dirs):
         eval_dataset = load_and_cache_examples(args, eval_task, tokenizer, data_type='dev')
         if not os.path.exists(eval_output_dir) and args.local_rank in [-1, 0]:
@@ -149,7 +150,7 @@ def evaluate(args, model, tokenizer, prefix=""):
         # Note that DistributedSampler samples randomly
         eval_sampler = SequentialSampler(eval_dataset) if args.local_rank == -1 else DistributedSampler(eval_dataset)
         eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size,
-                                     collate_fn=collate_fn)
+                                     collate_fn=collate_fn_ner)
 
         # Eval!
         logger.info("***** Running evaluation {} *****".format(prefix))
@@ -173,21 +174,20 @@ def evaluate(args, model, tokenizer, prefix=""):
                 eval_loss += tmp_eval_loss.mean().item()
             nb_eval_steps += 1
             if preds is None:
-                preds = logits.detach().cpu().numpy()
+                preds = np.argmax(logits.detach().cpu().numpy(), axis = 2)
+                # preds_argmax = np.argmax(preds, axis = 2)
                 out_label_ids = inputs['labels'].detach().cpu().numpy()
             else:
-                preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
+                preds_argmax = np.argmax(logits.detach().cpu().numpy(), axis = 2)
+                preds = np.append(preds, preds_argmax, axis=0)
                 out_label_ids = np.append(out_label_ids, inputs['labels'].detach().cpu().numpy(), axis=0)
             pbar(step)
         print(' ')
         if 'cuda' in str(args.device):
             torch.cuda.empty_cache()
         eval_loss = eval_loss / nb_eval_steps
-        if args.output_mode == "classification":
-            preds = np.argmax(preds, axis=1)
-        elif args.output_mode == "regression":
-            preds = np.squeeze(preds)
-        result = compute_metrics(eval_task, preds, out_label_ids)
+        evaluater = NerAccuracyEvaluator(label_lists, "WORD")
+        result = evaluater.evaluate(preds, out_label_ids)
         results.update(result)
         logger.info("***** Eval results {} *****".format(prefix))
         for key in sorted(result.keys()):
@@ -211,7 +211,11 @@ def load_and_cache_examples(args, task, tokenizer, data_type='train'):
         features = torch.load(cached_features_file)
     else:
         logger.info("Creating features from dataset file at %s", args.data_dir)
-        label_list = processor.get_labels()
+        os.makedirs(cached_features_file, exist_ok=True, mode=0o777)
+        if task == "ner":
+            label_list = processor.get_labels_ner(args.data_dir)
+        else:
+            label_list = processor.get_labels()
         if task in ['mnli', 'mnli-mm'] and 'roberta' in args.model_type:
             # HACK(label indices are swapped in RoBERTa pretrained model)
             label_list[1], label_list[2] = label_list[2], label_list[1]
@@ -229,8 +233,12 @@ def load_and_cache_examples(args, task, tokenizer, data_type='train'):
                                                 max_seq_length=args.max_seq_length,
                                                 output_mode = output_mode)
         if args.local_rank in [-1, 0]:
-            logger.info("Saving features into cached file %s", cached_features_file)
-            torch.save(features, cached_features_file)
+            try:
+                logger.info("Saving features into cached file %s", cached_features_file)
+                torch.save(features, cached_features_file)
+            except:
+                logger.info("Saving features into cached file %s Failed", cached_features_file)
+                pass
 
     if args.local_rank == 0 and not evaluate:
         torch.distributed.barrier()  # Make sure only the first process in distributed training process the dataset, and the others will use the cache
@@ -239,10 +247,12 @@ def load_and_cache_examples(args, task, tokenizer, data_type='train'):
     all_attention_mask = torch.tensor([f.attention_mask for f in features], dtype=torch.long)
     all_token_type_ids = torch.tensor([f.token_type_ids for f in features], dtype=torch.long)
     all_lens = torch.tensor([f.input_len for f in features], dtype=torch.long)
-    if output_mode == "classification":
-        all_labels = torch.tensor([f.label for f in features], dtype=torch.long)
-    elif output_mode == "regression":
-        all_labels = torch.tensor([f.label for f in features], dtype=torch.float)
+    print("all_lens", all_lens)
+    print("all_input_ids", all_input_ids.shape)
+    print("all_attention_mask", all_attention_mask.shape)
+    print("all_token_type_ids", all_token_type_ids.shape)
+
+    all_labels = torch.tensor([f.label for f in features], dtype=torch.long)
     dataset = TensorDataset(all_input_ids, all_attention_mask, all_token_type_ids, all_lens, all_labels)
     return dataset
 
@@ -370,7 +380,7 @@ def main():
         raise ValueError("Task error: %s, must be ner" % (args.task_name))
     processor = processors[args.task_name]()
     args.output_mode = output_modes[args.task_name]
-    label_list = processor.get_labels_ner()
+    label_list = processor.get_labels_ner(args.data_dir)
     num_labels = len(label_list)
 
     # Load pretrained model and tokenizer
@@ -383,7 +393,7 @@ def main():
                                           finetuning_task=args.task_name)
     tokenizer = tokenization_albert.FullTokenizer(vocab_file=args.vocab_file, do_lower_case=args.do_lower_case,
                                                  spm_model_file=args.spm_model_file)
-    model =AlbertForNet.from_pretrained(args.model_name_or_path,
+    model =AlbertForNer.from_pretrained(args.model_name_or_path,
                                                            from_tf=bool('.ckpt' in args.model_name_or_path),
                                                             config=config)
     if args.local_rank == 0:
@@ -394,7 +404,7 @@ def main():
     # Training
     if args.do_train:
         train_dataset = load_and_cache_examples(args, args.task_name, tokenizer, data_type='train')
-        global_step, tr_loss = train(args, train_dataset, model, tokenizer)
+        global_step, tr_loss = train(args, train_dataset, label_list, model, tokenizer)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
     # Saving best-practices: if you use defaults names for the model, you can reload it using from_pretrained()
@@ -429,9 +439,9 @@ def main():
             global_step = checkpoint.split('-')[-1] if len(checkpoints) > 1 else ""
             prefix = checkpoint.split('/')[-1] if checkpoint.find('checkpoint') != -1 else ""
 
-            model = AlbertForNet.from_pretrained(checkpoint)
+            model = AlbertForNer.from_pretrained(checkpoint)
             model.to(args.device)
-            result = evaluate(args, model, tokenizer, prefix=prefix)
+            result = evaluate(args, model, tokenizer, label_list, prefix=prefix)
             results.extend([(k + '_{}'.format(global_step), v) for k, v in result.items()])
         output_eval_file = os.path.join(args.output_dir, "checkpoint_eval_results.txt")
         with open(output_eval_file, "w") as writer:

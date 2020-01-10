@@ -123,16 +123,16 @@ class DataProcessor(object):
             for line in reader:
                 if len(line) != 2:
                     continue
-                labels.append(line[2])
+                labels.append(line[1])
             return labels
     
     @classmethod
     def _read_tsv_ner(cla, input_file):
         with open(input_file, "r", encoding = "utf-8-sig") as f:
             data = []
-            sentence = []
-            label = []
             for line in f:
+                sentence = []
+                label = []
                 line = line.strip()
                 lists = line.split(" ")
                 for words in lists:

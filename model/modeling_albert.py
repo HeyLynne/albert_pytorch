@@ -1091,7 +1091,7 @@ class AlbertForQuestionAnswering(AlbertPreTrainedModel):
     the hidden-states output) e.g. for Named-Entity-Recognition (NER) tasks. """,
                       ALBERT_START_DOCSTRING, ALBERT_INPUTS_DOCSTRING)
 
-class AlbertForNet(AlbertPreTrainedModel):
+class AlbertForNer(AlbertPreTrainedModel):
     r"""
         **labels**: (`optional`) ``torch.LongTensor`` of shape ``(batch_size, sequence_length)``:
             Labels for computing the token classification loss.
@@ -1118,12 +1118,13 @@ class AlbertForNet(AlbertPreTrainedModel):
     """
 
     def __init__(self, config):
-        super(AlbertForTokenClassification, self).__init__(config)
+        super(AlbertPreTrainedModel, self).__init__(config)
         self.num_labels = config.num_labels
 
         self.bert = AlbertModel(config)
         self.dropout = nn.Dropout(0.1 if config.hidden_dropout_prob == 0 else config.hidden_dropout_prob)
         self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+        logger.info("classifier %d-%d" %(config.hidden_size, config.num_labels))
 
         self.init_weights()
 
@@ -1138,20 +1139,20 @@ class AlbertForNet(AlbertPreTrainedModel):
 
         sequence_output = outputs[0]
 
-        sequence_output = self.dropout(sequence_output)
+        sequence_output = self.dropout(sequence_output[:,1:])
         logits = self.classifier(sequence_output)
+        print("logits shape1", logits.shape)
 
         outputs = (logits,) + outputs[2:]  # add hidden states and attention if they are here
         if labels is not None:
             loss_fct = CrossEntropyLoss()
             # Only keep active parts of the loss
             if attention_mask is not None:
-                active_loss = attention_mask.view(-1) == 1
+                active_loss = attention_mask[:, 1:].int().view(-1).type(torch.uint8)
                 active_logits = logits.view(-1, self.num_labels)[active_loss]
-                active_labels = labels.view(-1)[active_loss]
+                active_labels = labels.contiguous().view(-1)[active_loss]
                 loss = loss_fct(active_logits, active_labels)
             else:
                 loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            outputs = (loss,) + outputs
-
+            outputs = (loss, logits) + outputs
         return outputs  # (loss), scores, (hidden_states), (attentions)
