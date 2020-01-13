@@ -3,6 +3,7 @@
 from __future__ import absolute_import, division, print_function
 
 import argparse
+import datetime
 import os
 import glob
 import numpy as np
@@ -81,7 +82,7 @@ def train(args, train_dataset, label_lists, model, tokenizer):
     tr_loss, logging_loss = 0.0, 0.0
     model.zero_grad()
     seed_everything(args.seed)  # Added here for reproductibility (even between python 2 and 3)
-    for _ in range(int(args.num_train_epochs)):
+    for epoch in range(int(args.num_train_epochs)):
         pbar = ProgressBar(n_total=len(train_dataloader), desc='Training')
         for step, batch in enumerate(train_dataloader):
             model.train()
@@ -162,6 +163,8 @@ def evaluate(args, model, tokenizer, label_lists, prefix=""):
         out_label_ids = None
         pbar = ProgressBar(n_total=len(eval_dataloader), desc="Evaluating")
         for step, batch in enumerate(eval_dataloader):
+            now = datetime.datetime.now()
+
             model.eval()
             batch = tuple(t.to(args.device) for t in batch)
             with torch.no_grad():
@@ -182,11 +185,16 @@ def evaluate(args, model, tokenizer, label_lists, prefix=""):
                 preds = np.append(preds, preds_argmax, axis=0)
                 out_label_ids = np.append(out_label_ids, inputs['labels'].detach().cpu().numpy(), axis=0)
             pbar(step)
+
+            delta = (datetime.datetime.now() - now).microseconds / 1000
+            logger.info("Evaluating timecost, input length %d, timecost %d" \
+                % (len(batch[0]), delta))
         print(' ')
         if 'cuda' in str(args.device):
             torch.cuda.empty_cache()
         eval_loss = eval_loss / nb_eval_steps
         evaluater = NerAccuracyEvaluator(label_lists, "WORD")
+        
         result = evaluater.evaluate(preds, out_label_ids)
         results.update(result)
         logger.info("***** Eval results {} *****".format(prefix))
