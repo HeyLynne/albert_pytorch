@@ -219,7 +219,7 @@ def load_and_cache_examples(args, task, tokenizer, data_type='train'):
         features = torch.load(cached_features_file)
     else:
         logger.info("Creating features from dataset file at %s", args.data_dir)
-        os.makedirs(cached_features_file, exist_ok=True, mode=0o777)
+        # os.makedirs(cached_features_file, exist_ok=True, mode=0o777)
         if task == "ner":
             label_list = processor.get_labels_ner(args.data_dir)
         else:

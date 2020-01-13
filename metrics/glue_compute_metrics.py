@@ -67,14 +67,9 @@ class NerAccuracyEvaluator(object):
     def _evaluate_word(self, pred_labels, data_labels):
         hit_num, pred_num, true_num = 0, 0, 0
         label_cnt = pred_labels.shape[0]
-        print(pred_labels.shape)
         for i in range(label_cnt):
             tag_pred = self._get_tag_fromlabel(pred_labels[i, :])
             tag_true = self._get_tag_fromlabel(data_labels[i, :])
-            # print("****")
-            # print(self._get_label_tag(pred_labels[i, :]), self._get_label_tag(data_labels[i, :]))
-            # print(tag_pred)
-            # print(tag_true)
             true_cnt = len(set(tag_true))
             pred_cnt = len(set(tag_pred))
             hit_cnt = len(set(tag_true) & set(tag_pred))

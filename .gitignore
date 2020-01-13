@@ -104,4 +104,4 @@ venv.bak/
 
 # train data
 dataset/
-output/
+outputs/

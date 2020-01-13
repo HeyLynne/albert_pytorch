@@ -1148,7 +1148,7 @@ class AlbertForNer(AlbertPreTrainedModel):
             loss_fct = CrossEntropyLoss()
             # Only keep active parts of the loss
             if attention_mask is not None:
-                active_loss = attention_mask[:, 1:].int().view(-1).type(torch.uint8)
+                active_loss = attention_mask[:, 1:].contiguous().view(-1)
                 active_logits = logits.view(-1, self.num_labels)[active_loss]
                 active_labels = labels.contiguous().view(-1)[active_loss]
                 loss = loss_fct(active_logits, active_labels)
