@@ -136,7 +136,10 @@ class DataProcessor(object):
                 line = line.strip()
                 lists = line.split(" ")
                 for words in lists:
-                    word, tag = words.split("/")
+                    try:
+                        word, tag = words.split("/")
+                    except:
+                        continue
                     sentence.append(word)
                     label.append(tag)
                 if len(sentence) > 0:
