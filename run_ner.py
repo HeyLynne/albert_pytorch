@@ -135,6 +135,23 @@ def train(args, train_dataset, label_lists, model, tokenizer):
             torch.cuda.empty_cache()
     return global_step, tr_loss / global_step
 
+def collate_pred(preds, pred_argmax, axis = 0):
+    """
+    Compare preds and new pred shape, reshape and equal
+
+    """
+    _, preds_cols = preds.shape
+    _, argmax_cols = pred_argmax.shape
+    if preds_cols > argmax_cols:
+        padding_num = preds_cols - argmax_cols
+        pred_argmax = np.pad(pred_argmax, ((0, 0), (0, padding_num)), \
+            'constant', constant_values = (0, 0))
+    elif preds_cols < argmax_cols:
+        padding_num = argmax_cols - preds_cols
+        preds = np.pad(preds, ((0, 0), (0, padding_num)), \
+            'constant', constant_values = (0, 0))
+    return np.append(preds, pred_argmax, axis = axis)
+
 def evaluate(args, model, tokenizer, label_lists, prefix=""):
     # Loop to handle MNLI double evaluation (matched, mis-matched)
     eval_task_names = ("mnli", "mnli-mm") if args.task_name == "mnli" else (args.task_name,)
@@ -182,8 +199,8 @@ def evaluate(args, model, tokenizer, label_lists, prefix=""):
                 out_label_ids = inputs['labels'].detach().cpu().numpy()
             else:
                 preds_argmax = np.argmax(logits.detach().cpu().numpy(), axis = 2)
-                preds = np.append(preds, preds_argmax, axis=0)
-                out_label_ids = np.append(out_label_ids, inputs['labels'].detach().cpu().numpy(), axis=0)
+                preds = collate_pred(preds, preds_argmax)
+                out_label_ids = collate_pred(out_label_ids, inputs['labels'].detach().cpu().numpy())
             pbar(step)
 
             delta = (datetime.datetime.now() - now).microseconds / 1000
