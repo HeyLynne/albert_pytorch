@@ -152,6 +152,19 @@ def collate_pred(preds, pred_argmax, axis = 0):
             'constant', constant_values = (0, 0))
     return np.append(preds, pred_argmax, axis = axis)
 
+def print_eval_output(output_dir, preds, output_labels, label_lists):
+    evaluate_path = os.path.join(output_dir, "evaluate-result.log")
+    fout = open(evaluate_path, "w")
+    preds_rows, _ = preds.shape
+    output_rows, _ = output_labels.shape
+    for i in range(preds_rows):
+        pred_label = preds[i, :]
+        out_label = output_labels[i, :]
+        pred_tag = list(map(lambda x: label_lists[x - 1], pred_label))
+        out_tag = list(map(lambda x: label_lists[x - 1], out_label))
+        fout.write("%s\t%s\n" % (" ".join(out_tag), " ".join(pred_tag)))
+    fout.close()
+
 def evaluate(args, model, tokenizer, label_lists, prefix=""):
     # Loop to handle MNLI double evaluation (matched, mis-matched)
     eval_task_names = ("mnli", "mnli-mm") if args.task_name == "mnli" else (args.task_name,)
@@ -217,6 +230,10 @@ def evaluate(args, model, tokenizer, label_lists, prefix=""):
         logger.info("***** Eval results {} *****".format(prefix))
         for key in sorted(result.keys()):
             logger.info("  %s = %s", key, str(result[key]))
+
+        # Store evaluate results
+        if args.do_eval and args.output_eval:
+            print_eval_output(args.output_dir, preds, out_label_ids, label_lists)
     return results
 
 def load_and_cache_examples(args, task, tokenizer, data_type='train'):
@@ -312,6 +329,8 @@ def main():
                         help="Whether to run training.")
     parser.add_argument("--do_eval", action='store_true',
                         help="Whether to run eval on the dev set.")
+    parser.add_argument("--output_eval", action='store_true',
+                        help="Whether to write output result.")
     parser.add_argument("--do_predict", action='store_true',
                         help="Whether to run the model in inference mode on the test set.")
     parser.add_argument("--do_lower_case", action='store_true',
